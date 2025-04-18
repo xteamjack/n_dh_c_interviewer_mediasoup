@@ -1,0 +1,20 @@
+{
+  "name": "mediasoup-meeting-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server.js"
+  },
+  "dependencies": {
+    "mediasoup-client": "^3.9.5",
+    "socket.io-client": "^4.7.5",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.6"
+  }
+}
