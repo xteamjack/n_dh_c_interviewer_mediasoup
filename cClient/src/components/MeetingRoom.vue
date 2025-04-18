@@ -1,9 +1,27 @@
 <template>
   <div>
-    <h1 class="text-xl font-bold mb-4">Room001 Video Call</h1>
-    <video ref="localVideo" autoplay muted class="w-1/2"></video>
-    <video ref="remoteVideo" autoplay class="w-1/2"></video>
-    <button @click="start" class="mt-4 bg-blue-600 text-white p-2 rounded">Join</button>
+    <h1 class="text-xl font-bold mb-4 text-gray-900 dark:text-gray-100">
+      Room001 Video Call
+    </h1>
+    <div class="grid gap-4">
+      <video
+        ref="localVideo"
+        autoplay
+        muted
+        class="w-1/2 rounded-lg bg-gray-200 dark:bg-gray-800"
+      ></video>
+      <video
+        ref="remoteVideo"
+        autoplay
+        class="w-1/2 rounded-lg bg-gray-200 dark:bg-gray-800"
+      ></video>
+    </div>
+    <button
+      @click="start"
+      class="mt-4 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded transition-colors duration-200"
+    >
+      Join
+    </button>
   </div>
 </template>
 

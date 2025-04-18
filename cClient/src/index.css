@@ -4,5 +4,15 @@
 
 /* Optional custom styles */
 body {
-  @apply font-sans antialiased;
+  @apply font-sans antialiased transition-colors duration-200;
+}
+
+/* Dark mode transitions */
+.dark {
+  color-scheme: dark;
+}
+
+/* Ensure smooth transitions for dark mode changes */
+* {
+  @apply transition-colors duration-200;
 }
