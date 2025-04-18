@@ -9,9 +9,12 @@
     "server": "node server.js"
   },
   "dependencies": {
+    "express": "^4.18.2",
     "mediasoup-client": "^3.9.5",
+    "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",
-    "vue": "^3.4.21"
+    "vue": "^3.4.21",
+    "webrtc-adapter": "^8.2.3"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",

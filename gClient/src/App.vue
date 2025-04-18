@@ -8,11 +8,11 @@
       <div class="video-grid">
         <div>
           <h3>Local Video</h3>
-          <video ref="localVideo" autoplay muted></video>
+          <video ref="localVideo" autoplay muted playsinline></video>
         </div>
         <div v-for="(stream, peerId) in remoteStreams" :key="peerId">
           <h3>Peer {{ peerId }}</h3>
-          <video :ref="(el) => setRemoteVideo(peerId, el)" autoplay></video>
+          <video :ref="(el) => setRemoteVideo(peerId, el)" autoplay playsinline></video>
         </div>
       </div>
     </div>
@@ -20,7 +20,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { Device } from "mediasoup-client";
 import io from "socket.io-client";
 
@@ -36,7 +36,9 @@ const setRemoteVideo = (peerId, el) => {
   if (el && !remoteVideos.value[peerId]) {
     remoteVideos.value[peerId] = el;
     if (remoteStreams.value[peerId]) {
+      console.log("Setting remote stream for", peerId);
       el.srcObject = remoteStreams.value[peerId];
+      el.play().catch((e) => console.error("Remote video play failed:", e));
     }
   }
 };
@@ -44,12 +46,20 @@ const setRemoteVideo = (peerId, el) => {
 async function joinRoom() {
   joining.value = true;
   try {
-    // Get user media
+    // Get user media (video only for testing)
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
-      audio: true,
+      audio: false,
     });
-    localVideo.value.srcObject = stream;
+    console.log(
+      "Local stream tracks:",
+      stream.getTracks().map((t) => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+        id: t.id,
+      }))
+    );
 
     // Initialize MediaSoup device
     device.value = new Device();
@@ -62,9 +72,16 @@ async function joinRoom() {
     const producerTransportData = await new Promise((resolve) => {
       socket.emit("createTransport", { direction: "producer" }, resolve);
     });
-    const producerTransport = device.value.createSendTransport(producerTransportData);
+    const producerTransport = device.value.createSendTransport({
+      ...producerTransportData,
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
 
     producerTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
+      console.log("Producer transport connect:", dtlsParameters);
       socket.emit(
         "connectTransport",
         {
@@ -73,13 +90,18 @@ async function joinRoom() {
           direction: "producer",
         },
         (response) => {
+          console.log("Producer connect response:", response);
           if (response.error) {
-            errback(response.error);
+            errback(new Error(response.error));
           } else {
             callback();
           }
         }
       );
+    });
+
+    producerTransport.on("connectionstatechange", (state) => {
+      console.log("Producer transport state:", state);
     });
 
     producerTransport.on("produce", async ({ kind, rtpParameters }, callback) => {
@@ -94,18 +116,59 @@ async function joinRoom() {
       );
     });
 
-    // Produce audio and video
-    for (const track of stream.getTracks()) {
-      await producerTransport.produce({ track });
+    // Produce tracks with validation
+    const tracks = stream.getTracks().map((track) => {
+      const newStream = new MediaStream([track]);
+      return newStream.getTracks().find((t) => t.kind === track.kind);
+    });
+    for (const track of tracks) {
+      console.log(
+        `Producing track: ${track.kind}, id: ${track.id}, readyState: ${
+          track.readyState
+        }, enabled: ${track.enabled}, instanceof MediaStreamTrack: ${
+          track instanceof MediaStreamTrack
+        }`
+      );
+      try {
+        structuredClone(track);
+        console.log(`Track ${track.kind} is serializable`);
+      } catch (error) {
+        console.error(`Track ${track.kind} serialization test failed:`, error);
+      }
+      if (
+        track.readyState === "live" &&
+        track.enabled &&
+        track instanceof MediaStreamTrack
+      ) {
+        try {
+          const producer = await producerTransport.produce({ track });
+          console.log(
+            `Successfully produced ${track.kind} track, producer ID: ${producer.id}`
+          );
+        } catch (error) {
+          console.error(`Failed to produce ${track.kind} track:`, error);
+        }
+      } else {
+        console.warn(
+          `Skipping invalid track: ${track.kind}, readyState: ${track.readyState}, enabled: ${track.enabled}`
+        );
+      }
     }
 
     // Create consumer transport
     const consumerTransportData = await new Promise((resolve) => {
       socket.emit("createTransport", { direction: "consumer" }, resolve);
     });
-    const consumerTransport = device.value.createRecvTransport(consumerTransportData);
+    const consumerTransport = device.value.createRecvTransport({
+      ...consumerTransportData,
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
 
     consumerTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
+      console.log("Consumer transport connect:", dtlsParameters);
       socket.emit(
         "connectTransport",
         {
@@ -114,8 +177,9 @@ async function joinRoom() {
           direction: "consumer",
         },
         (response) => {
+          console.log("Consumer connect response:", response);
           if (response.error) {
-            errback(response.error);
+            errback(new Error(response.error));
           } else {
             callback();
           }
@@ -123,16 +187,26 @@ async function joinRoom() {
       );
     });
 
+    // Set joined to true and assign stream
     joined.value = true;
+    await nextTick();
+    if (localVideo.value) {
+      console.log("Assigning stream to localVideo");
+      localVideo.value.srcObject = stream;
+      localVideo.value.play().catch((e) => console.error("Local video play failed:", e));
+    } else {
+      console.error("localVideo ref is null after join");
+    }
   } catch (error) {
     console.error("Error joining room:", error);
+  } finally {
+    joining.value = false;
   }
-  joining.value = false;
 }
 
-// Handle new producer
 socket.on("newProducer", async ({ producerId, kind, socketId }) => {
   if (!joined.value) return;
+  console.log("Received newProducer:", { producerId, kind, socketId });
 
   const consumerData = await new Promise((resolve) => {
     socket.emit(
@@ -142,7 +216,10 @@ socket.on("newProducer", async ({ producerId, kind, socketId }) => {
         producerId,
         socketId,
       },
-      resolve
+      (response) => {
+        console.log("Consume response:", response);
+        resolve(response);
+      }
     );
   });
 
@@ -160,16 +237,23 @@ socket.on("newProducer", async ({ producerId, kind, socketId }) => {
   });
 
   const stream = new MediaStream([consumer.track]);
+  console.log("Adding remote stream for", socketId, stream);
   remoteStreams.value[socketId] = stream;
+  remoteStreams.value = { ...remoteStreams.value };
   if (remoteVideos.value[socketId]) {
     remoteVideos.value[socketId].srcObject = stream;
+    remoteVideos.value[socketId]
+      .play()
+      .catch((e) => console.error("Remote play failed:", e));
   }
 
-  socket.emit("resumeConsumer", { consumerId: consumer.id });
+  socket.emit("resumeConsumer", { consumerId: consumer.id }, (response) => {
+    console.log("Resume consumer response:", response);
+  });
 });
 
-// Handle peer disconnect
 socket.on("peerDisconnected", (peerId) => {
+  console.log("Peer disconnected:", peerId);
   delete remoteStreams.value[peerId];
   delete remoteVideos.value[peerId];
   remoteStreams.value = { ...remoteStreams.value };
@@ -177,6 +261,7 @@ socket.on("peerDisconnected", (peerId) => {
 
 onMounted(() => {
   socket.connect();
+  socket.on("connect", () => console.log("Socket connected:", socket.id));
 });
 
 onUnmounted(() => {
