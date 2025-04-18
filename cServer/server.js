@@ -1,10 +1,19 @@
 const express = require("express");
-const http = require("http");
+// const http = require("http");
+const fs = require("fs");
+const https = require("https");
 const socketIO = require("socket.io");
 const mediasoupManager = require("./mediasoupManager");
 
 const app = express();
-const server = http.createServer(app);
+// const server = http.createServer(app);
+const server = https.createServer(
+  {
+    key: fs.readFileSync("../certs/key.pem"),
+    cert: fs.readFileSync("../certs/cert.pem"),
+  },
+  app
+);
 const io = socketIO(server, { cors: { origin: "*" } });
 
 let room = null;
@@ -63,5 +72,5 @@ io.on("connection", async (socket) => {
 });
 
 server.listen(3000, () =>
-  console.log("Server running on http://localhost:3000")
+  console.log("Server running on https://0.0.0.0:3000")
 );
