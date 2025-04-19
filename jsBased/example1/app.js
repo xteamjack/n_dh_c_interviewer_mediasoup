@@ -21,9 +21,18 @@ app.get("*", (req, res, next) => {
   if (req.path.indexOf(path) == 0 && req.path.length > path.length)
     return next();
 
+  res.set("Content-Type", "text/html");
   res.send(
-    `You need to specify a room name in the path e.g. 'https://127.0.0.1/sfu/room'`
+    Buffer.from(
+      `<h2>Meeting App</h2>
+    <p>You need to specify a room name in the path e.g. 
+    <a href='https://192.168.0.51:3000/sfu/r1'>https://192.168.0.51:3000/sfu/r1</a></p>
+    `
+    )
   );
+  // res.send(
+  //   `You need to specify a room name in the path e.g. 'https://127.0.0.1/sfu/room'`
+  // );
 });
 
 app.use("/sfu/:room", express.static(path.join(__dirname, "public")));
