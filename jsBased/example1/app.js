@@ -10,10 +10,220 @@ const app = express();
 import https from "httpolyglot";
 import fs from "fs";
 import path from "path";
-const __dirname = path.resolve();
-
 import { Server } from "socket.io";
 import mediasoup from "mediasoup";
+// Add new imports
+import { spawn } from "child_process";
+import { fileURLToPath } from "url";
+
+const __dirname = path.resolve();
+const recordingsPath = path.join(__dirname, "recordings");
+
+// Enhanced logging function
+const log = {
+  info: (msg, ...args) => console.log(`[INFO] ${msg}`, ...args),
+  error: (msg, ...args) => console.error(`[ERROR] ${msg}`, ...args),
+  debug: (msg, ...args) => console.log(`[DEBUG] ${msg}`, ...args),
+  warn: (msg, ...args) => console.warn(`[WARN] ${msg}`, ...args), // Added warn level
+};
+
+// Ensure recordings directory exists with logging
+if (!fs.existsSync(recordingsPath)) {
+  try {
+    fs.mkdirSync(recordingsPath, { recursive: true });
+    log.info(`Created recordings directory at: ${recordingsPath}`);
+  } catch (error) {
+    log.error(`Failed to create recordings directory: ${error.message}`);
+  }
+}
+
+// Enhanced startRecording function with logging
+const startRecording = async (producer, roomName, socketId) => {
+  try {
+    log.info(`Starting recording for room: ${roomName}, socketId: ${socketId}`);
+
+    // Ensure recordings directory exists
+    if (!fs.existsSync(recordingsPath)) {
+      fs.mkdirSync(recordingsPath, { recursive: true });
+    }
+
+    const recordingPath = path.join(
+      recordingsPath,
+      `${roomName}_${socketId}_${Date.now()}.webm`
+    );
+
+    // Create a plain transport for recording
+    const router = rooms[roomName].router;
+    const transport = await router.createPlainTransport({
+      listenIp: { ip: "127.0.0.1", announcedIp: null },
+      rtcpMux: true,
+      comedia: true,
+      preferUdp: true,
+      enableSctp: false,
+      port: Math.floor(Math.random() * (65000 - 50000) + 50000),
+    });
+
+    // Connect the transport to the producer
+    const consumer = await transport.consume({
+      producerId: producer.id,
+      rtpCapabilities: router.rtpCapabilities,
+      paused: false,
+    });
+
+    // Get the RTP parameters
+    const remoteRtpParameters = consumer.rtpParameters;
+
+    // Enhanced SDP content with more specific video parameters
+    const sdpContent = `v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=FFmpeg
+c=IN IP4 127.0.0.1
+t=0 0
+m=video ${transport.tuple.localPort} RTP/AVP ${remoteRtpParameters.codecs[0].payloadType}
+a=rtpmap:${remoteRtpParameters.codecs[0].payloadType} VP8/90000
+a=recvonly
+a=rtcp-mux
+a=setup:passive
+a=mid:video
+a=ssrc:${remoteRtpParameters.encodings[0].ssrc} cname:ffmpeg
+`;
+
+    const sdpPath = path.join(recordingsPath, `${socketId}.sdp`);
+    fs.writeFileSync(sdpPath, sdpContent);
+    log.debug("Created SDP file:", sdpContent);
+
+    // Modified FFmpeg arguments with more specific parameters
+    const ffmpegArgs = [
+      "-hide_banner",
+      "-loglevel",
+      "debug",
+      "-protocol_whitelist",
+      "file,rtp,udp",
+      "-i",
+      sdpPath,
+      "-c:v",
+      "copy",
+      "-an",
+      "-y",
+      recordingPath,
+    ];
+
+    log.debug("Starting FFmpeg with args:", ffmpegArgs.join(" "));
+
+    try {
+      await transport.connect({
+        ip: "127.0.0.1",
+        port: transport.tuple.localPort,
+        rtcpPort: transport.tuple.localPort,
+      });
+
+      // Only start FFmpeg after successful transport connection
+      const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+
+      // Resume the consumer immediately
+      await consumer.resume();
+
+      ffmpeg.stdout.on("data", (data) => {
+        log.debug(`FFmpeg stdout: ${data}`);
+      });
+
+      ffmpeg.stderr.on("data", (data) => {
+        const message = data.toString();
+        log.debug(`FFmpeg stderr: ${message}`);
+      });
+
+      ffmpeg.on("error", (error) => {
+        log.error(`FFmpeg process error: ${error.message}`);
+        log.error(error.stack);
+      });
+
+      ffmpeg.on("exit", (code, signal) => {
+        if (code === 0) {
+          log.info(
+            `FFmpeg process completed successfully for ${recordingPath}`
+          );
+        } else {
+          log.error(
+            `FFmpeg process exited with code ${code} and signal ${signal}`
+          );
+        }
+        if (fs.existsSync(sdpPath)) {
+          fs.unlinkSync(sdpPath);
+        }
+      });
+
+      // Modified monitoring logic
+      const maxRetries = 15;
+      let retryCount = 0;
+      const monitorRecording = setInterval(() => {
+        try {
+          if (fs.existsSync(recordingPath)) {
+            const stats = fs.statSync(recordingPath);
+            if (stats.size > 0) {
+              log.info(
+                `Recording file created successfully, size: ${stats.size} bytes`
+              );
+              clearInterval(monitorRecording);
+            } else if (retryCount < maxRetries) {
+              log.info(
+                `Recording file empty, retry ${retryCount + 1}/${maxRetries}`
+              );
+              retryCount++;
+            } else {
+              log.error(
+                "Failed to create recording file after maximum retries"
+              );
+              clearInterval(monitorRecording);
+            }
+          } else if (retryCount < maxRetries) {
+            log.info(
+              `Recording file not created yet, retry ${
+                retryCount + 1
+              }/${maxRetries}`
+            );
+            retryCount++;
+          } else {
+            log.error("Failed to create recording file after maximum retries");
+            clearInterval(monitorRecording);
+          }
+        } catch (error) {
+          log.error(`Error checking recording file: ${error.message}`);
+        }
+      }, 2000);
+
+      // Add debug logging for RTP flow
+      transport.observer.on("newrtptransceiver", (rtpTransceiver) => {
+        log.debug("New RTP transceiver:", rtpTransceiver.mid);
+      });
+
+      consumer.observer.on("close", () => {
+        log.debug("Consumer closed");
+      });
+
+      consumer.observer.on("pause", () => {
+        log.debug("Consumer paused");
+      });
+
+      consumer.observer.on("resume", () => {
+        log.debug("Consumer resumed");
+      });
+
+      return {
+        transport,
+        consumer,
+        ffmpeg,
+        path: recordingPath,
+        monitorInterval: monitorRecording,
+      };
+    } catch (error) {
+      log.error(`Transport connection failed: ${error.message}`);
+      throw error;
+    }
+  } catch (error) {
+    log.error(`Error in startRecording: ${error.message}`);
+    throw error;
+  }
+};
 
 app.get("*", (req, res, next) => {
   const path = "/sfu/";
@@ -95,8 +305,13 @@ const mediaCodecs = [
   {
     kind: "audio",
     mimeType: "audio/opus",
+    preferredPayloadType: 111,
     clockRate: 48000,
     channels: 2,
+    parameters: {
+      minptime: 10,
+      useinbandfec: 1,
+    },
   },
   {
     kind: "video",
@@ -126,8 +341,41 @@ connections.on("connection", async (socket) => {
   };
 
   socket.on("disconnect", () => {
-    // do some cleanup
-    console.log("peer disconnected");
+    log.info(`Peer disconnected: ${socket.id}`);
+
+    // Stop any ongoing recordings
+    if (peers[socket.id]?.recording) {
+      log.info(`Stopping recording for peer ${socket.id}`);
+      try {
+        // Clear the monitoring interval
+        if (peers[socket.id].recording.monitorInterval) {
+          clearInterval(peers[socket.id].recording.monitorInterval);
+        }
+
+        // Gracefully close FFmpeg
+        if (peers[socket.id].recording.ffmpeg) {
+          peers[socket.id].recording.ffmpeg.stdin.end();
+          peers[socket.id].recording.ffmpeg.kill("SIGTERM");
+        }
+
+        // Close transport and consumer
+        if (peers[socket.id].recording.transport) {
+          peers[socket.id].recording.transport.close();
+        }
+        if (peers[socket.id].recording.consumer) {
+          peers[socket.id].recording.consumer.close();
+        }
+
+        log.info("Recording stopped successfully");
+
+        // Check final file size
+        const finalStats = fs.statSync(peers[socket.id].recording.path);
+        log.info(`Final recording file size: ${finalStats.size} bytes`);
+      } catch (error) {
+        log.error(`Error stopping recording: ${error.message}`);
+      }
+    }
+
     consumers = removeItems(consumers, socket.id, "consumer");
     producers = removeItems(producers, socket.id, "producer");
     transports = removeItems(transports, socket.id, "transport");
@@ -324,31 +572,51 @@ connections.on("connection", async (socket) => {
   socket.on(
     "transport-produce",
     async ({ kind, rtpParameters, appData }, callback) => {
-      // call produce based on the prameters from the client
-      const producer = await getTransport(socket.id).produce({
-        kind,
-        rtpParameters,
-      });
+      try {
+        log.info(`New transport-produce request for kind: ${kind}`);
+        const producer = await getTransport(socket.id).produce({
+          kind,
+          rtpParameters,
+        });
 
-      // add producer to the producers array
-      const { roomName } = peers[socket.id];
+        const { roomName } = peers[socket.id];
+        addProducer(producer, roomName);
+        informConsumers(roomName, socket.id, producer.id);
 
-      addProducer(producer, roomName);
+        // Start recording when a new producer is created
+        if (kind === "video") {
+          log.info("Video producer detected, starting recording");
+          const recording = await startRecording(producer, roomName, socket.id);
 
-      informConsumers(roomName, socket.id, producer.id);
+          // Store recording reference
+          peers[socket.id].recording = recording;
+          log.info(`Recording stored for peer ${socket.id}`);
 
-      console.log("Producer ID: ", producer.id, producer.kind);
+          producer.on("transportclose", () => {
+            log.info(`Transport closed for producer ${producer.id}`);
+            if (peers[socket.id]?.recording) {
+              log.info("Cleaning up recording resources");
+              peers[socket.id].recording.ffmpeg.stdin.end();
+              peers[socket.id].recording.transport.close();
+              peers[socket.id].recording.consumer.close();
+            }
+          });
+        }
 
-      producer.on("transportclose", () => {
-        console.log("transport for this producer closed ");
-        producer.close();
-      });
+        log.debug("Producer created:", {
+          id: producer.id,
+          kind: producer.kind,
+        });
 
-      // Send back to the client the Producer's id
-      callback({
-        id: producer.id,
-        producersExist: producers.length > 1 ? true : false,
-      });
+        callback({
+          id: producer.id,
+          producersExist: producers.length > 1 ? true : false,
+        });
+      } catch (error) {
+        log.error(`Error in transport-produce: ${error.message}`);
+        log.error(error.stack);
+        callback({ error: error.message });
+      }
     }
   );
 
@@ -487,3 +755,77 @@ const createWebRtcTransport = async (router) => {
     }
   });
 };
+
+// Add FFmpeg version check on startup
+const checkFFmpeg = async () => {
+  try {
+    const ffmpeg = spawn("ffmpeg", ["-version"]);
+    ffmpeg.on("error", (error) => {
+      log.error("FFmpeg is not installed or not in PATH");
+      log.error(error.message);
+    });
+    ffmpeg.stdout.on("data", (data) => {
+      log.info(`FFmpeg version: ${data.toString().split("\n")[0]}`);
+    });
+  } catch (error) {
+    log.error("Failed to check FFmpeg version:", error);
+  }
+};
+
+// Call FFmpeg check on startup
+checkFFmpeg();
+
+// Add this near the start of your application
+const verifyEnvironment = async () => {
+  // Check recordings directory permissions
+  try {
+    const testFile = path.join(recordingsPath, "test.txt");
+    fs.writeFileSync(testFile, "test");
+    fs.unlinkSync(testFile);
+    log.info("Recordings directory is writable");
+  } catch (error) {
+    log.error(`Recordings directory is not writable: ${error.message}`);
+  }
+
+  // Check available disk space - Windows compatible version
+  try {
+    if (process.platform === "win32") {
+      const { exec } = await import("child_process");
+      exec("wmic logicaldisk get size,freespace,caption", (error, stdout) => {
+        if (error) {
+          log.error(`Unable to check disk space: ${error.message}`);
+          return;
+        }
+        const drive = path.parse(recordingsPath).root.charAt(0);
+        const lines = stdout.trim().split("\n");
+        const driveInfo = lines
+          .filter((line) => line.startsWith(drive))
+          .map((line) => line.trim().split(/\s+/));
+
+        if (driveInfo.length > 0) {
+          const [caption, freeSpace, size] = driveInfo[0];
+          const freeGB = Math.round(freeSpace / (1024 * 1024 * 1024));
+          const totalGB = Math.round(size / (1024 * 1024 * 1024));
+          log.info(
+            `Drive ${caption} - Free: ${freeGB}GB / Total: ${totalGB}GB`
+          );
+        }
+      });
+    } else {
+      // Unix/Linux systems
+      const { exec } = await import("child_process");
+      exec(`df -h "${recordingsPath}"`, (error, stdout) => {
+        if (error) {
+          log.error(`Unable to check disk space: ${error.message}`);
+          return;
+        }
+        log.info(`Available disk space:\n${stdout}`);
+      });
+    }
+  } catch (error) {
+    log.error(`Unable to check disk space: ${error.message}`);
+  }
+};
+
+// Call this during startup
+verifyEnvironment();

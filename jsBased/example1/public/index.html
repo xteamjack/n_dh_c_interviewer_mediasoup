@@ -1,40 +1,80 @@
 <html>
   <head>
     <style>
-        button {
-            margin: 2;
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #ffffff;
+            --secondary-bg: #2d2d2d;
+            --border-color: #404040;
         }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+
+        button {
+            margin: 2px;
+            background-color: var(--secondary-bg);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #3d3d3d;
+        }
+
         tr {
             vertical-align: top;
         }
+
         video {
             width: 360px;
-            background-color: black;
-            padding: 10;
+            background-color: #000000;
+            padding: 10px;
             margin: 1px 1px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
         }
+
         .mainTable {
             width: 100%;
+            border-collapse: separate;
+            border-spacing: 10px;
         }
+
         .localColumn {
             width: 246px;
+            background-color: var(--secondary-bg);
+            padding: 15px;
+            border-radius: 8px;
         }
+
         .remoteColumn {
             display: flex;
             flex-wrap: wrap;
+            background-color: var(--secondary-bg);
+            padding: 15px;
+            border-radius: 8px;
+            gap: 10px;
         }
 
         #localVideo {
-            width: 240;
+            width: 240px;
         }
+
         .remoteVideo {
             float: left;
         }
 
         .videoWrap {
-            margin: 3;
-            /* padding: 5; */
-            /* background-color: papayawhip; */
+            margin: 3px;
             display: flex;
             justify-content: center;
         }
@@ -53,33 +93,30 @@
     </style>
   </head>
   <body>
-    <body>
-        <div id="video">
-            <table class="mainTable">
-                <tbody>
-                    <tr>
-                        <td class="localColumn">
-                            <video id="localVideo" autoplay class="video" muted ></video>
-                        </td>
-                        <td class="remoteColumn">
-                            <div id="videoContainer"></div>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-            <table>
-                <tbody>
-                    <tr>
-                        <td>
-                            
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </body>
+    <div id="video">
+        <table class="mainTable">
+            <tbody>
+                <tr>
+                    <td class="localColumn">
+                        <video id="localVideo" autoplay class="video" muted ></video>
+                    </td>
+                    <td class="remoteColumn">
+                        <div id="videoContainer"></div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <table>
+            <tbody>
+                <tr>
+                    <td>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <footer>
+        <script src="bundle.js"></script>
+    </footer>
   </body>
-  <footer>
-      <script src="bundle.js"></script>
-  </footer>
 </html>
