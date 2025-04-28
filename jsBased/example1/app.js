@@ -38,189 +38,730 @@ if (!fs.existsSync(recordingsPath)) {
 }
 
 // Enhanced startRecording function with logging
+// const startRecording = async (producer, roomName, socketId) => {
+//   try {
+//     log.info(`Starting recording for room: ${roomName}, socketId: ${socketId}`);
+
+//     // Ensure recordings directory exists
+//     if (!fs.existsSync(recordingsPath)) {
+//       fs.mkdirSync(recordingsPath, { recursive: true });
+//     }
+
+//     const recordingPath = path.join(
+//       recordingsPath,
+//       `${roomName}_${socketId}_${Date.now()}.webm`
+//     );
+
+//     // Create a plain transport for recording
+//     const router = rooms[roomName].router;
+//     const transport = await router.createPlainTransport({
+//       listenIp: { ip: "127.0.0.1", announcedIp: null },
+//       rtcpMux: true,
+//       comedia: true,
+//       preferUdp: true,
+//       enableSctp: false,
+//       port: Math.floor(Math.random() * (65000 - 50000) + 50000),
+//     });
+
+//     // Connect the transport to the producer
+//     const consumer = await transport.consume({
+//       producerId: producer.id,
+//       rtpCapabilities: router.rtpCapabilities,
+//       paused: false,
+//     });
+
+//     // Get the RTP parameters
+//     const remoteRtpParameters = consumer.rtpParameters;
+
+//     // Enhanced SDP content with more specific video parameters
+//     //     const sdpContent = `v=0
+//     // o=- 0 0 IN IP4 127.0.0.1
+//     // s=FFmpeg
+//     // c=IN IP4 127.0.0.1
+//     // t=0 0
+//     // m=video ${transport.tuple.localPort} RTP/AVP ${remoteRtpParameters.codecs[0].payloadType}
+//     // a=rtpmap:${remoteRtpParameters.codecs[0].payloadType} VP8/90000
+//     // a=recvonly
+//     // a=rtcp-mux
+//     // a=setup:passive
+//     // a=mid:video
+//     // a=ssrc:${remoteRtpParameters.encodings[0].ssrc} cname:ffmpeg
+//     // `;
+
+//     const sdpContent = `
+//     v=0
+// o=- 0 0 IN IP4 127.0.0.1
+// s=FFmpeg
+// c=IN IP4 127.0.0.1
+// t=0 0
+// m=video 58257 RTP/AVP 100
+// a=rtpmap:100 VP8/90000
+// a=fmtp:100 max-fr=30;max-fs=3600
+// a=framesize:100 640-480
+// a=recvonly
+// a=rtcp-mux
+// a=setup:passive
+// a=mid:video
+// a=ssrc:628231417 cname:ffmpeg
+
+//     `;
+
+//     const sdpPath = path.join(recordingsPath, `${socketId}.sdp`);
+//     fs.writeFileSync(sdpPath, sdpContent);
+//     log.debug("Created SDP file:", sdpContent);
+
+//     // Modified FFmpeg arguments with more specific parameters
+//     const ffmpegArgs = [
+//       "-hide_banner",
+//       "-loglevel",
+//       "debug",
+//       "-protocol_whitelist",
+//       "file,rtp,udp",
+//       "-i",
+//       sdpPath,
+//       "-c:v",
+//       "copy",
+//       "-an",
+//       // "-y",
+//       // "-analyzeduration 5000000",
+//       // "-probesize 5000000",
+//       recordingPath,
+//     ];
+
+//     log.debug("Starting FFmpeg with args:", ffmpegArgs.join(" "));
+
+//     try {
+//       await transport.connect({
+//         ip: "127.0.0.1",
+//         port: transport.tuple.localPort,
+//         rtcpPort: transport.tuple.localPort,
+//       });
+
+//       // Only start FFmpeg after successful transport connection
+//       const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+
+//       // Resume the consumer immediately
+//       await consumer.resume();
+
+//       ffmpeg.stdout.on("data", (data) => {
+//         log.debug(`FFmpeg stdout: ${data}`);
+//       });
+
+//       ffmpeg.stderr.on("data", (data) => {
+//         const message = data.toString();
+//         log.debug(`FFmpeg stderr: ${message}`);
+//       });
+
+//       ffmpeg.on("error", (error) => {
+//         log.error(`FFmpeg process error: ${error.message}`);
+//         log.error(error.stack);
+//       });
+
+//       ffmpeg.on("exit", (code, signal) => {
+//         if (code === 0) {
+//           log.info(
+//             `FFmpeg process completed successfully for ${recordingPath}`
+//           );
+//         } else {
+//           log.error(
+//             `FFmpeg process exited with code ${code} and signal ${signal}`
+//           );
+//         }
+//         if (fs.existsSync(sdpPath)) {
+//           fs.unlinkSync(sdpPath);
+//         }
+//       });
+
+//       // Modified monitoring logic
+//       const maxRetries = 15;
+//       let retryCount = 0;
+//       const monitorRecording = setInterval(() => {
+//         try {
+//           if (fs.existsSync(recordingPath)) {
+//             const stats = fs.statSync(recordingPath);
+//             if (stats.size > 0) {
+//               log.info(
+//                 `Recording file created successfully, size: ${stats.size} bytes`
+//               );
+//               clearInterval(monitorRecording);
+//             } else if (retryCount < maxRetries) {
+//               log.info(
+//                 `Recording file empty, retry ${retryCount + 1}/${maxRetries}`
+//               );
+//               retryCount++;
+//             } else {
+//               log.error(
+//                 "Failed to create recording file after maximum retries"
+//               );
+//               clearInterval(monitorRecording);
+//             }
+//           } else if (retryCount < maxRetries) {
+//             log.info(
+//               `Recording file not created yet, retry ${
+//                 retryCount + 1
+//               }/${maxRetries}`
+//             );
+//             retryCount++;
+//           } else {
+//             log.error("Failed to create recording file after maximum retries");
+//             clearInterval(monitorRecording);
+//           }
+//         } catch (error) {
+//           log.error(`Error checking recording file: ${error.message}`);
+//         }
+//       }, 2000);
+
+//       // Add debug logging for RTP flow
+//       transport.observer.on("newrtptransceiver", (rtpTransceiver) => {
+//         log.debug("New RTP transceiver:", rtpTransceiver.mid);
+//       });
+
+//       consumer.observer.on("close", () => {
+//         log.debug("Consumer closed");
+//       });
+
+//       consumer.observer.on("pause", () => {
+//         log.debug("Consumer paused");
+//       });
+
+//       consumer.observer.on("resume", () => {
+//         log.debug("Consumer resumed");
+//       });
+
+//       return {
+//         transport,
+//         consumer,
+//         ffmpeg,
+//         path: recordingPath,
+//         monitorInterval: monitorRecording,
+//       };
+//     } catch (error) {
+//       log.error(`Transport connection failed: ${error.message}`);
+//       throw error;
+//     }
+//   } catch (error) {
+//     log.error(`Error in startRecording: ${error.message}`);
+//     throw error;
+//   }
+// };
+
+// const fs = require("fs");
+// const path = require("path");
+// const { spawn } = require("child_process");
+
+// const startRecording = async (producer, roomName, socketId) => {
+//   try {
+//     log.info(`Starting recording for room: ${roomName}, socketId: ${socketId}`);
+
+//     // Ensure recordings directory exists
+//     if (!fs.existsSync(recordingsPath)) {
+//       fs.mkdirSync(recordingsPath, { recursive: true });
+//     }
+
+//     const timestamp = Date.now();
+//     const recordingPath = path.join(
+//       recordingsPath,
+//       `${roomName}_${socketId}_${timestamp}.webm`
+//     );
+//     const sdpPath = path.join(recordingsPath, `${socketId}_${timestamp}.sdp`);
+
+//     const router = rooms[roomName].router;
+
+//     // Create a plain transport
+//     const transport = await router.createPlainTransport({
+//       listenIp: { ip: "127.0.0.1", announcedIp: null },
+//       rtcpMux: true,
+//       comedia: true,
+//       enableSctp: false,
+//       preferUdp: true,
+//       port: Math.floor(Math.random() * (65000 - 50000) + 50000),
+//     });
+
+//     // Create consumer
+//     const consumer = await transport.consume({
+//       producerId: producer.id,
+//       rtpCapabilities: router.rtpCapabilities,
+//       paused: true,
+//     });
+
+//     const { codecs, encodings } = consumer.rtpParameters;
+//     const port = transport.tuple.localPort;
+//     const payloadType = codecs[0].payloadType;
+//     const ssrc = encodings[0].ssrc;
+
+//     const sdpContent = `
+// v=0
+// o=- 0 0 IN IP4 127.0.0.1
+// s=Mediasoup Recording
+// c=IN IP4 127.0.0.1
+// t=0 0
+// m=video ${port} RTP/AVP ${payloadType}
+// a=rtpmap:${payloadType} VP8/90000
+// a=recvonly
+// a=rtcp-mux
+// a=setup:passive
+// a=mid:video
+// a=ssrc:${ssrc} cname:ffmpeg
+// a=framesize:${payloadType} 640-480
+// `.trim();
+
+//     fs.writeFileSync(sdpPath, sdpContent);
+//     log.debug("SDP file created:", sdpPath);
+
+//     const ffmpegArgs = [
+//       "-hide_banner",
+//       "-loglevel",
+//       "debug",
+//       "-protocol_whitelist",
+//       "file,rtp,udp",
+//       "-analyzeduration",
+//       "5000000",
+//       "-probesize",
+//       "5000000",
+//       "-i",
+//       sdpPath,
+//       "-c:v",
+//       "copy",
+//       "-an",
+//       recordingPath,
+//     ];
+
+//     await transport.connect({
+//       ip: "127.0.0.1",
+//       port: port,
+//       rtcpPort: port,
+//     });
+
+//     const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+
+//     ffmpeg.stdout.on("data", (data) => {
+//       log.debug(`FFmpeg stdout: ${data}`);
+//     });
+
+//     ffmpeg.stderr.on("data", (data) => {
+//       log.debug(`FFmpeg stderr: ${data}`);
+//     });
+
+//     ffmpeg.on("error", (error) => {
+//       log.error(`FFmpeg error: ${error.message}`);
+//     });
+
+//     ffmpeg.on("exit", (code, signal) => {
+//       if (code === 0) {
+//         log.info(`FFmpeg exited successfully for ${recordingPath}`);
+//       } else {
+//         log.error(`FFmpeg exited with code ${code} and signal ${signal}`);
+//       }
+//       if (fs.existsSync(sdpPath)) {
+//         fs.unlinkSync(sdpPath);
+//       }
+//     });
+
+//     await consumer.resume();
+
+//     // Monitor file growth
+//     const maxRetries = 15;
+//     let retryCount = 0;
+//     const monitorInterval = setInterval(() => {
+//       try {
+//         if (fs.existsSync(recordingPath)) {
+//           const stats = fs.statSync(recordingPath);
+//           if (stats.size > 0) {
+//             log.info(`Recording file size: ${stats.size} bytes`);
+//             clearInterval(monitorInterval);
+//           } else if (++retryCount >= maxRetries) {
+//             log.error("Recording file empty after max retries");
+//             clearInterval(monitorInterval);
+//           }
+//         } else if (++retryCount >= maxRetries) {
+//           log.error("Recording file not found after max retries");
+//           clearInterval(monitorInterval);
+//         }
+//       } catch (err) {
+//         log.error(`Error monitoring recording file: ${err.message}`);
+//       }
+//     }, 2000);
+
+//     // Optional: Add observers for debugging
+//     consumer.observer.on("close", () => log.debug("Consumer closed"));
+//     consumer.observer.on("pause", () => log.debug("Consumer paused"));
+//     consumer.observer.on("resume", () => log.debug("Consumer resumed"));
+
+//     return {
+//       transport,
+//       consumer,
+//       ffmpeg,
+//       path: recordingPath,
+//       monitorInterval,
+//     };
+//   } catch (error) {
+//     log.error(`Failed to start recording: ${error.message}`);
+//     throw error;
+//   }
+// };
+
+// const startRecording = async (producer, roomName, socketId) => {
+//   try {
+//     log.info(
+//       `🎬 Starting recording for room: ${roomName}, socketId: ${socketId}`
+//     );
+
+//     log.info(JSON.stringify(producer.rtpParameters, null, 2));
+
+//     const { codecs } = producer.rtpParameters;
+//     const videoCodec = codecs.find(
+//       (c) => c.mimeType.toLowerCase() === "video/vp8"
+//     );
+//     if (!videoCodec) throw new Error("VP8 codec not found");
+
+//     if (!fs.existsSync(recordingsPath)) {
+//       fs.mkdirSync(recordingsPath, { recursive: true });
+//     }
+
+//     const filename = `${roomName}_${socketId}_${Date.now()}.webm`;
+//     const recordingPath = path.join(recordingsPath, filename);
+
+//     const router = rooms[roomName].router;
+
+//     // Create PlainTransport
+//     const transport = await router.createPlainTransport({
+//       listenIp: { ip: "127.0.0.1", announcedIp: null },
+//       rtcpMux: true,
+//       comedia: true,
+//       preferUdp: true,
+//     });
+
+//     log.debug(
+//       `📡 Created plain transport at port: ${transport.tuple.localPort}`
+//     );
+
+//     // Create consumer for producer
+//     const consumer = await transport.consume({
+//       producerId: producer.id,
+//       rtpCapabilities: router.rtpCapabilities,
+//       paused: true, // Pause initially
+//     });
+
+//     const { payloadType, clockRate, mimeType } =
+//       consumer.rtpParameters.codecs[0];
+//     const { ssrc } = consumer.rtpParameters.encodings[0];
+
+//     log.debug(
+//       transport.tuple.localPort,
+//       payloadType,
+//       clockRate,
+//       mimeType,
+//       ssrc
+//     );
+
+//     // Generate dynamic SDP
+//     const sdpContent = `
+// v=0
+// o=- 0 0 IN IP4 127.0.0.1
+// s=FFmpeg
+// c=IN IP4 127.0.0.1
+// t=0 0
+// m=video ${transport.tuple.localPort} RTP/AVP ${payloadType}
+// a=rtpmap:${payloadType} ${mimeType.split("/")[1]}/${clockRate}
+// a=fmtp:${payloadType} max-fr=30;max-fs=3600
+// a=framesize:${payloadType} 640-480
+// a=recvonly
+// a=rtcp-mux
+// a=setup:passive
+// a=mid:video
+// a=ssrc:${ssrc} cname:ffmpeg
+// `.trim();
+
+//     const sdpPath = path.join(recordingsPath, `${socketId}.sdp`);
+//     fs.writeFileSync(sdpPath, sdpContent);
+//     log.debug(`📝 SDP written to ${sdpPath}\n${sdpContent}`);
+
+//     // FFmpeg args
+//     const ffmpegArgs = [
+//       "-hide_banner",
+//       "-loglevel",
+//       "debug",
+//       "-protocol_whitelist",
+//       "file,udp,rtp",
+//       "-analyzeduration",
+//       "20000000",
+//       "-probesize",
+//       "20000000",
+//       "-i",
+//       sdpPath,
+//       "-c:v",
+//       "copy",
+//       "-an",
+//       recordingPath,
+//     ];
+
+//     log.debug("🚀 FFmpeg args:", ffmpegArgs.join(" "));
+
+//     // Connect transport
+//     await transport.connect({
+//       ip: "127.0.0.1",
+//       port: transport.tuple.localPort,
+//     });
+//     log.debug("✅ Transport connected");
+
+//     // Start FFmpeg
+//     const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+
+//     ffmpeg.stdout.on("data", (data) => {
+//       log.debug(`FFmpeg stdout: ${data.toString().trim()}`);
+//     });
+
+//     ffmpeg.stderr.on("data", (data) => {
+//       log.debug(`FFmpeg stderr: ${data.toString().trim()}`);
+//     });
+
+//     ffmpeg.on("error", (err) => {
+//       log.error("FFmpeg error:", err);
+//     });
+
+//     ffmpeg.on("exit", (code, signal) => {
+//       if (code === 0) {
+//         log.info(`✅ FFmpeg finished: ${recordingPath}`);
+//       } else {
+//         log.error(`❌ FFmpeg exited with code ${code}, signal ${signal}`);
+//       }
+//       if (fs.existsSync(sdpPath)) fs.unlinkSync(sdpPath);
+//     });
+
+//     // Resume consumer after FFmpeg has started
+//     await consumer.resume();
+//     log.debug("🎥 Consumer resumed");
+
+//     // Trace packets
+//     consumer.observer.on("trace", (trace) => {
+//       if (trace.type === "rtp") {
+//         log.debug("📦 RTP packet received");
+//       }
+//     });
+
+//     // File monitoring
+//     const maxRetries = 15;
+//     let retryCount = 0;
+
+//     const monitorRecording = setInterval(() => {
+//       try {
+//         if (fs.existsSync(recordingPath)) {
+//           const stats = fs.statSync(recordingPath);
+//           if (stats.size > 0) {
+//             log.info(
+//               `📁 Recording file created: ${recordingPath}, size: ${stats.size} bytes`
+//             );
+//             clearInterval(monitorRecording);
+//           } else if (retryCount++ >= maxRetries) {
+//             log.error("❌ File empty after retries");
+//             clearInterval(monitorRecording);
+//           }
+//         } else if (retryCount++ >= maxRetries) {
+//           log.error("❌ Recording file not created after retries");
+//           clearInterval(monitorRecording);
+//         }
+//       } catch (err) {
+//         log.error("📉 Monitor error:", err.message);
+//       }
+//     }, 2000);
+
+//     return {
+//       transport,
+//       consumer,
+//       ffmpeg,
+//       path: recordingPath,
+//       monitorInterval: monitorRecording,
+//     };
+//   } catch (error) {
+//     log.error("❌ Error in startRecording:", error);
+//     throw error;
+//   }
+// };
+
 const startRecording = async (producer, roomName, socketId) => {
   try {
-    log.info(`Starting recording for room: ${roomName}, socketId: ${socketId}`);
+    log.info(
+      `🎬 Starting recording for room: ${roomName}, socketId: ${socketId}`
+    );
 
-    // Ensure recordings directory exists
+    // Log producer's rtpParameters for debugging
+    log.info(
+      "Producer rtpParameters:",
+      JSON.stringify(producer.rtpParameters, null, 2)
+    );
+
+    const { codecs, encodings } = producer.rtpParameters;
+    const videoCodec = codecs.find(
+      (c) => c.mimeType.toLowerCase() === "video/vp8"
+    );
+    if (!videoCodec) throw new Error("VP8 codec not found");
+
+    // Extract resolution and framerate from encodings or fmtp (if available)
+    const encoding = encodings[0] || {};
+    const fmtpParams = videoCodec.parameters || {};
+    const resolution =
+      encoding.maxWidth && encoding.maxHeight
+        ? `${encoding.maxWidth}-${encoding.maxHeight}`
+        : "640-480"; // Fallback to default
+    const framerate = encoding.maxFramerate || fmtpParams["max-fr"] || 30;
+
+    log.info(`Detected resolution: ${resolution}, framerate: ${framerate}`);
+
     if (!fs.existsSync(recordingsPath)) {
       fs.mkdirSync(recordingsPath, { recursive: true });
     }
 
-    const recordingPath = path.join(
-      recordingsPath,
-      `${roomName}_${socketId}_${Date.now()}.webm`
-    );
+    const filename = `${roomName}_${socketId}_${Date.now()}.webm`;
+    const recordingPath = path.join(recordingsPath, filename);
 
-    // Create a plain transport for recording
     const router = rooms[roomName].router;
+
+    // Create PlainTransport
     const transport = await router.createPlainTransport({
       listenIp: { ip: "127.0.0.1", announcedIp: null },
       rtcpMux: true,
       comedia: true,
       preferUdp: true,
-      enableSctp: false,
-      port: Math.floor(Math.random() * (65000 - 50000) + 50000),
     });
 
-    // Connect the transport to the producer
+    log.debug(
+      `📡 Created plain transport at port: ${transport.tuple.localPort}`
+    );
+
+    // Create consumer for producer
     const consumer = await transport.consume({
       producerId: producer.id,
       rtpCapabilities: router.rtpCapabilities,
-      paused: false,
+      paused: true, // Pause initially
     });
 
-    // Get the RTP parameters
-    const remoteRtpParameters = consumer.rtpParameters;
+    const { payloadType, clockRate, mimeType } =
+      consumer.rtpParameters.codecs[0];
+    const { ssrc } = consumer.rtpParameters.encodings[0];
 
-    // Enhanced SDP content with more specific video parameters
-    const sdpContent = `v=0
+    log.debug(
+      `Consumer params: port=${transport.tuple.localPort}, payloadType=${payloadType}, clockRate=${clockRate}, mimeType=${mimeType}, ssrc=${ssrc}`
+    );
+
+    // Generate dynamic SDP
+    const sdpContent = `
+v=0
 o=- 0 0 IN IP4 127.0.0.1
 s=FFmpeg
 c=IN IP4 127.0.0.1
 t=0 0
-m=video ${transport.tuple.localPort} RTP/AVP ${remoteRtpParameters.codecs[0].payloadType}
-a=rtpmap:${remoteRtpParameters.codecs[0].payloadType} VP8/90000
+m=video ${transport.tuple.localPort} RTP/AVP ${payloadType}
+a=rtpmap:${payloadType} ${mimeType.split("/")[1]}/${clockRate}
+a=fmtp:${payloadType} max-fr=${framerate};max-fs=3600
+a=framesize:${payloadType} ${resolution}
+a=framerate:${framerate}
 a=recvonly
 a=rtcp-mux
 a=setup:passive
 a=mid:video
-a=ssrc:${remoteRtpParameters.encodings[0].ssrc} cname:ffmpeg
-`;
+a=ssrc:${ssrc} cname:ffmpeg
+`.trim();
 
     const sdpPath = path.join(recordingsPath, `${socketId}.sdp`);
     fs.writeFileSync(sdpPath, sdpContent);
-    log.debug("Created SDP file:", sdpContent);
+    log.debug(`📝 SDP written to ${sdpPath}\n${sdpContent}`);
 
-    // Modified FFmpeg arguments with more specific parameters
+    // FFmpeg args
     const ffmpegArgs = [
       "-hide_banner",
       "-loglevel",
       "debug",
       "-protocol_whitelist",
-      "file,rtp,udp",
+      "file,udp,rtp",
+      "-analyzeduration",
+      "30000000", // Increased to 30s
+      "-probesize",
+      "30000000", // Increased to 30MB
       "-i",
       sdpPath,
       "-c:v",
       "copy",
       "-an",
-      "-y",
       recordingPath,
     ];
 
-    log.debug("Starting FFmpeg with args:", ffmpegArgs.join(" "));
+    log.debug("🚀 FFmpeg args:", ffmpegArgs.join(" "));
 
-    try {
-      await transport.connect({
-        ip: "127.0.0.1",
-        port: transport.tuple.localPort,
-        rtcpPort: transport.tuple.localPort,
-      });
+    // Connect transport (comedia handles port negotiation)
+    await transport.connect({});
+    log.debug("✅ Transport connected");
 
-      // Only start FFmpeg after successful transport connection
-      const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+    // Start FFmpeg
+    const ffmpeg = spawn("ffmpeg", ffmpegArgs);
 
-      // Resume the consumer immediately
-      await consumer.resume();
+    ffmpeg.stdout.on("data", (data) => {
+      log.debug(`FFmpeg stdout: ${data.toString().trim()}`);
+    });
 
-      ffmpeg.stdout.on("data", (data) => {
-        log.debug(`FFmpeg stdout: ${data}`);
-      });
+    ffmpeg.stderr.on("data", (data) => {
+      log.debug(`FFmpeg stderr: ${data.toString().trim()}`);
+    });
 
-      ffmpeg.stderr.on("data", (data) => {
-        const message = data.toString();
-        log.debug(`FFmpeg stderr: ${message}`);
-      });
+    ffmpeg.on("error", (err) => {
+      log.error("FFmpeg error:", err);
+    });
 
-      ffmpeg.on("error", (error) => {
-        log.error(`FFmpeg process error: ${error.message}`);
-        log.error(error.stack);
-      });
+    ffmpeg.on("exit", (code, signal) => {
+      if (code === 0) {
+        log.info(`✅ FFmpeg finished: ${recordingPath}`);
+      } else {
+        log.error(`❌ FFmpeg exited with code ${code}, signal ${signal}`);
+      }
+      if (fs.existsSync(sdpPath)) fs.unlinkSync(sdpPath);
+    });
 
-      ffmpeg.on("exit", (code, signal) => {
-        if (code === 0) {
-          log.info(
-            `FFmpeg process completed successfully for ${recordingPath}`
-          );
-        } else {
-          log.error(
-            `FFmpeg process exited with code ${code} and signal ${signal}`
-          );
-        }
-        if (fs.existsSync(sdpPath)) {
-          fs.unlinkSync(sdpPath);
-        }
-      });
+    // Add slight delay before resuming consumer to ensure FFmpeg is ready
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await consumer.resume();
+    log.debug("🎥 Consumer resumed");
 
-      // Modified monitoring logic
-      const maxRetries = 15;
-      let retryCount = 0;
-      const monitorRecording = setInterval(() => {
-        try {
-          if (fs.existsSync(recordingPath)) {
-            const stats = fs.statSync(recordingPath);
-            if (stats.size > 0) {
-              log.info(
-                `Recording file created successfully, size: ${stats.size} bytes`
-              );
-              clearInterval(monitorRecording);
-            } else if (retryCount < maxRetries) {
-              log.info(
-                `Recording file empty, retry ${retryCount + 1}/${maxRetries}`
-              );
-              retryCount++;
-            } else {
-              log.error(
-                "Failed to create recording file after maximum retries"
-              );
-              clearInterval(monitorRecording);
-            }
-          } else if (retryCount < maxRetries) {
+    // Trace RTP packets for debugging
+    consumer.observer.on("trace", (trace) => {
+      if (trace.type === "rtp") {
+        log.debug(`📦 RTP packet received: seq=${trace.info.sequenceNumber}`);
+      }
+    });
+
+    // File monitoring
+    const maxRetries = 20; // Increased to 40s
+    let retryCount = 0;
+
+    const monitorRecording = setInterval(() => {
+      try {
+        if (fs.existsSync(recordingPath)) {
+          const stats = fs.statSync(recordingPath);
+          if (stats.size > 0) {
             log.info(
-              `Recording file not created yet, retry ${
-                retryCount + 1
-              }/${maxRetries}`
+              `📁 Recording file created: ${recordingPath}, size: ${stats.size} bytes`
             );
-            retryCount++;
-          } else {
-            log.error("Failed to create recording file after maximum retries");
+            clearInterval(monitorRecording);
+          } else if (retryCount++ >= maxRetries) {
+            log.error("❌ File empty after retries");
             clearInterval(monitorRecording);
           }
-        } catch (error) {
-          log.error(`Error checking recording file: ${error.message}`);
+        } else if (retryCount++ >= maxRetries) {
+          log.error("❌ Recording file not created after retries");
+          clearInterval(monitorRecording);
         }
-      }, 2000);
+      } catch (err) {
+        log.error("📉 Monitor error:", err.message);
+      }
+    }, 2000);
 
-      // Add debug logging for RTP flow
-      transport.observer.on("newrtptransceiver", (rtpTransceiver) => {
-        log.debug("New RTP transceiver:", rtpTransceiver.mid);
-      });
-
-      consumer.observer.on("close", () => {
-        log.debug("Consumer closed");
-      });
-
-      consumer.observer.on("pause", () => {
-        log.debug("Consumer paused");
-      });
-
-      consumer.observer.on("resume", () => {
-        log.debug("Consumer resumed");
-      });
-
-      return {
-        transport,
-        consumer,
-        ffmpeg,
-        path: recordingPath,
-        monitorInterval: monitorRecording,
-      };
-    } catch (error) {
-      log.error(`Transport connection failed: ${error.message}`);
-      throw error;
-    }
+    return {
+      transport,
+      consumer,
+      ffmpeg,
+      path: recordingPath,
+      monitorInterval: monitorRecording,
+    };
   } catch (error) {
-    log.error(`Error in startRecording: ${error.message}`);
+    log.error("❌ Error in startRecording:", error);
     throw error;
   }
 };
@@ -234,7 +775,8 @@ app.get("*", (req, res, next) => {
   res.set("Content-Type", "text/html");
   res.send(
     Buffer.from(
-      `<h2>Meeting App</h2>
+      `<body bgcolor="black" text="silver">
+      <h2>Meeting App</h2>
     <p>You need to specify a room name in the path e.g. 
     <a href='https://192.168.0.51:3000/sfu/r1'>https://192.168.0.51:3000/sfu/r1</a></p>
     `
