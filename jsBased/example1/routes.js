@@ -7,6 +7,11 @@ const __dirname = path.resolve();
 
 // Main route handler
 router.get("*", (req, res, next) => {
+  // Skip this handler for API routes
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  
   const path = "/sfu/";
 
   if (req.path.indexOf(path) == 0 && req.path.length > path.length)

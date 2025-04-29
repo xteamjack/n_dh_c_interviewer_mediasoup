@@ -1,28 +1,45 @@
-import express from "express";
-import https from "httpolyglot";
-import fs from "fs";
-import path from "path";
-import { Server } from "socket.io";
-import mediasoup from "mediasoup";
-import { spawn } from "child_process";
-import { fileURLToPath } from "url";
-import createWebRtcTransport from './mediaSoup/createWebRtcTransport.js';
+// If using ES modules (type: "module" in package.json)
+import dotenv from 'dotenv';
+import express from 'express';
+import cors from 'cors';
+import https from 'httpolyglot';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { Server } from 'socket.io';
+import mediasoup from 'mediasoup';
+import { spawn } from 'child_process';
 import dgram from 'dgram';
 import net from 'net';
-import * as os from 'os';
+import os from 'os';
+import { verifyToken } from './middleware/auth.js';
+import createWebRtcTransport from './mediaSoup/createWebRtcTransport.js';
 import log from './utils/logger.js';
 import routes from './routes.js';
 import checkFFmpeg from './utils/checkFFmpeg.js';
 import verifyEnvironment from './utils/verifyEnvironment.js';
 
+// Initialize dotenv
+dotenv.config();
+
+// Set up __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Create Express app
 const app = express();
+
+// Add CORS support if the AI moderator will be calling from a different origin
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS || '*', // Ideally, restrict this to specific origins
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Add middleware
 app.use(express.json());
 app.use(express.static('public'));
 
-const __dirname = path.resolve();
 const recordingsPath = path.join(__dirname, "recordings");
 
 // Ensure recordings directory exists with logging
@@ -179,28 +196,32 @@ const startRecording = async (producer, roomName, socketId) => {
 
     const router = rooms[roomName].router;
 
-    // Find an available port with a wider range and more retries
-    const availablePort = await findAvailablePort(10000, 59999);
-
-    // Create PlainTransport with specific port and different IP settings
+    // Create a transport without specifying a port, letting mediasoup choose one
     const transport = await router.createPlainTransport({
-      listenIp: { ip: "127.0.0.1", announcedIp: "127.0.0.1" }, // Use loopback directly
+      listenIp: { ip: "0.0.0.0", announcedIp: "127.0.0.1" },
       rtcpMux: true,
-      comedia: true, // Enable comedia mode to handle NAT issues
-      port: availablePort
+      comedia: false,
     });
 
     log.debug(`📡 Created plain transport at port: ${transport.tuple.localPort}`);
+
+    // Use the port that mediasoup has already bound successfully
+    const boundPort = transport.tuple.localPort;
+    log.debug(`Using mediasoup-bound port: ${boundPort}`);
 
     // Make sure to properly close any existing recording for this room
     if (roomRecordings[roomName]) {
       log.info(`Closing existing recording for room ${roomName}`);
       try {
         clearInterval(roomRecordings[roomName].monitorInterval);
+        clearInterval(roomRecordings[roomName].packetMonitor); // Clear packet monitor
         roomRecordings[roomName].ffmpeg.kill("SIGTERM");
         roomRecordings[roomName].transport.close();
         roomRecordings[roomName].consumer.close();
         delete roomRecordings[roomName];
+        
+        // Add a delay to ensure resources are released
+        await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
         log.error(`Error closing existing recording: ${error.message}`);
       }
@@ -221,63 +242,65 @@ const startRecording = async (producer, roomName, socketId) => {
       `Consumer params: port=${transport.tuple.localPort}, payloadType=${payloadType}, clockRate=${clockRate}, mimeType=${mimeType}, ssrc=${ssrc}`
     );
 
-    // Generate a unique SDP filename for each recording session
-    const sdpFilename = `${roomName}_${socketId}_${Date.now()}.sdp`;
-    const sdpPath = path.join(recordingsPath, sdpFilename);
+    // Generate a unique SDP filename with absolute path
+    const sdpFilename = `${roomName}_room-recording_${Date.now()}.sdp`;
+    const sdpPath = path.resolve(path.join(recordingsPath, sdpFilename));
+    log.info(`Creating SDP file at: ${sdpPath}`);
 
-    // Generate a more detailed SDP with explicit dimensions
-    const sdpContent = `
-v=0
+    // Find an available port for RTP
+    const getAvailablePort = () => {
+      return new Promise((resolve, reject) => {
+        const server = dgram.createSocket('udp4');
+        server.on('error', reject);
+        server.bind(0, () => {
+          const port = server.address().port;
+          server.close(() => resolve(port));
+        });
+      });
+    };
+
+    // Get an available port
+    const rtpPort = await getAvailablePort();
+    log.info(`Found available UDP port: ${rtpPort}`);
+
+    // Update the SDP content to include size information and more detailed codec parameters
+    const sdpContent = `v=0
 o=- 0 0 IN IP4 127.0.0.1
 s=FFmpeg
 c=IN IP4 127.0.0.1
 t=0 0
-m=video ${transport.tuple.localPort} RTP/AVP ${payloadType}
+m=video ${rtpPort} RTP/AVP ${payloadType}
 a=rtpmap:${payloadType} ${mimeType.split("/")[1]}/${clockRate}
-a=fmtp:${payloadType} max-fr=${framerate};max-fs=3600
-a=sendonly
+a=fmtp:${payloadType} max-fr=30;max-recv-width=${width};max-recv-height=${height}
+a=recvonly
 a=rtcp-mux
 a=ssrc:${ssrc} cname:ffmpeg
-a=width:${width}
-a=height:${height}
 `.trim();
 
-    fs.writeFileSync(sdpPath, sdpContent);
-    log.debug(`📝 SDP written to ${sdpPath}\n${sdpContent}`);
-
-    // Test if SDP file is readable
-    try {
-      const readSdp = fs.readFileSync(sdpPath, 'utf8');
-      log.debug(`✅ SDP file is readable, content length: ${readSdp.length}`);
-    } catch (error) {
-      log.error(`❌ Failed to read SDP file: ${error.message}`);
+    // Create the SDP file
+    const sdpCreated = createSdpFile(sdpPath, sdpContent);
+    if (!sdpCreated) {
+      throw new Error("Failed to create SDP file");
     }
 
-    // More robust FFmpeg args with explicit encoding
+    // Create a debug copy in a more accessible location
+    const debugCopy = path.join(process.cwd(), 'debug-latest.sdp');
+    fs.copyFileSync(sdpPath, debugCopy);
+    log.info(`Debug copy created at: ${debugCopy}`);
+
+    // Update FFmpeg args with more explicit options
     const ffmpegArgs = [
       "-hide_banner",
-      "-loglevel",
-      "debug",
-      "-protocol_whitelist",
-      "file,udp,rtp",
-      "-analyzeduration",
-      "30000000",
-      "-probesize",
-      "30000000",
-      "-i",
-      sdpPath,
-      "-map",
-      "0:v",
-      "-c:v",
-      "libvpx", // Use libvpx encoder instead of copy
-      "-b:v",
-      "1M",     // Set bitrate
-      "-auto-alt-ref",
-      "0",
-      "-deadline",
-      "realtime",
-      "-an",
-      recordingPath,
+      "-loglevel", "debug",
+      "-protocol_whitelist", "file,udp,rtp",
+      "-analyzeduration", "10000000",  // Increase analysis duration
+      "-probesize", "10000000",        // Increase probe size
+      "-i", sdpPath,
+      "-map", "0:v:0",                 // Explicitly map video stream
+      "-c:v", "copy",                  // Copy video codec
+      "-f", "webm",                    // Force webm format
+      "-y",                            // Overwrite output file if it exists
+      recordingPath
     ];
 
     log.debug("🚀 FFmpeg args:", ffmpegArgs.join(" "));
@@ -295,57 +318,97 @@ a=height:${height}
       log.error(`❌ FFmpeg check failed: ${error.message}`);
     }
 
-    // Connect transport with explicit parameters
-    await transport.connect({
-      ip: "127.0.0.1",
-      port: transport.tuple.localPort
-    });
-    log.debug("✅ Transport connected");
+    // Add this function to make important messages stand out
+    const logHighlight = (message) => {
+      log.info(`\x1b[33m\x1b[1m${message}\x1b[0m`); // Bright yellow
+    };
 
-    // Start FFmpeg
+    // Update the FFmpeg command logging
+    logHighlight(`\n==== FFMPEG COMMAND FOR MANUAL TESTING ====\nffmpeg ${ffmpegArgs.join(" ")}\n=======================================`);
+
+    // Start FFmpeg process with better error handling
     const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+    let ffmpegStarted = false;
 
     ffmpeg.stdout.on("data", (data) => {
-      log.debug(`FFmpeg stdout: ${data.toString().trim()}`);
+      const msg = data.toString();
+      log.debug(`FFmpeg stdout: ${msg}`);
+      ffmpegStarted = true;
     });
 
     ffmpeg.stderr.on("data", (data) => {
-      const output = data.toString().trim();
-      log.debug(`FFmpeg stderr: ${output}`);
+      const msg = data.toString();
+      log.debug(`FFmpeg stderr: ${msg}`);
       
-      // Log specific FFmpeg errors or warnings that might indicate issues
-      if (output.includes("Error") || output.includes("error") || 
-          output.includes("Warning") || output.includes("warning")) {
-        log.warn(`⚠️ FFmpeg issue detected: ${output}`);
+      // Check for specific error patterns
+      if (msg.includes("bind failed") || msg.includes("Error number -10048")) {
+        log.error(`❌ FFmpeg port binding error detected`);
       }
       
-      // Log RTP packet reception
-      if (output.includes("RTP Packet")) {
-        log.debug(`📦 FFmpeg received RTP packet`);
+      if (msg.includes("Error") || msg.includes("error") || msg.includes("Invalid")) {
+        log.warn(`⚠️ FFmpeg issue detected: ${msg.trim()}`);
       }
+      
+      ffmpegStarted = true;
     });
 
-    ffmpeg.on("error", (err) => {
-      log.error("❌ FFmpeg process error:", err);
-    });
+    // Wait a moment to ensure FFmpeg has started before connecting the transport
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    ffmpeg.on("exit", (code, signal) => {
-      if (code === 0) {
-        log.info(`✅ FFmpeg finished: ${recordingPath}`);
-      } else {
-        log.error(`❌ FFmpeg exited with code ${code}, signal ${signal}`);
-      }
-      if (fs.existsSync(sdpPath)) fs.unlinkSync(sdpPath);
+    if (!ffmpegStarted) {
+      log.error("❌ FFmpeg failed to start properly");
+      throw new Error("FFmpeg failed to start");
+    }
+
+    // Connect transport
+    await transport.connect({
+      ip: '127.0.0.1',
+      port: rtpPort
+      // Remove rtcpPort parameter since rtcpMux is enabled
     });
+    log.debug("✅ Transport connected");
 
     // Add slight delay before resuming consumer to ensure FFmpeg is ready
     await new Promise((resolve) => setTimeout(resolve, 1000));
     await consumer.resume();
     log.debug("🎥 Consumer resumed");
 
+    // Add more detailed RTP monitoring
+    const packetMonitor = setInterval(async () => {
+      if (consumer) {
+        try {
+          const stats = await consumer.getStats();
+          
+          // Check if stats is an array or convert it to an array if it's not
+          let packetsReceived = 0;
+          
+          if (Array.isArray(stats)) {
+            packetsReceived = stats.reduce((count, stat) => count + (stat.packetsReceived || 0), 0);
+          } else if (typeof stats === 'object') {
+            // If stats is an object, iterate through its properties
+            Object.values(stats).forEach(stat => {
+              packetsReceived += (stat.packetsReceived || 0);
+            });
+          }
+          
+          if (packetsReceived === 0) {
+            log.warn("⚠️ No RTP packets received yet - check network and ports");
+          } else {
+            log.info(`RTP packets received: ${packetsReceived}`);
+          }
+          
+          // Log the structure of stats for debugging
+          log.debug(`Stats structure: ${JSON.stringify(stats, null, 2).substring(0, 200)}...`);
+        } catch (error) {
+          log.error(`Error getting consumer stats: ${error.message}`);
+        }
+      }
+    }, 5000);
+
     // Trace RTP packets for debugging
     consumer.observer.on("trace", (trace) => {
       if (trace.type === "rtp") {
+        packetCount++;
         log.debug(`📦 RTP packet received: seq=${trace.info.sequenceNumber}`);
       }
     });
@@ -383,6 +446,7 @@ a=height:${height}
       path: recordingPath,
       sdpPath: sdpPath, // Add this line to store the SDP path
       monitorInterval: monitorRecording,
+      packetMonitor: packetMonitor // Add this to clean up later
     };
   } catch (error) {
     log.error("❌ Error in startRecording:", error);
@@ -392,6 +456,70 @@ a=height:${height}
 
 // Apply routes
 app.use(routes);
+
+// Add these API endpoints before your existing routes
+
+// API endpoint for AI to start recording
+// POST https://192.168.0.51:3000/api/ai/rooms/:roomName/recording/start
+app.post('/api/ai/rooms/:roomName/recording/start', verifyToken, async (req, res) => {
+  try {
+    const { roomName } = req.params;
+    
+    log.info(`Authenticated request to start recording for room ${roomName}`);
+    
+    const recordingPath = await startAIMeetingRecording(roomName);
+    res.json({ 
+      success: true, 
+      message: recordingPath ? 'Recording started' : 'Recording will start when video is available',
+      path: recordingPath
+    });
+  } catch (error) {
+    log.error(`API error starting recording: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API endpoint for AI to stop recording
+// POST https://192.168.0.51:3000/api/ai/rooms/:roomName/recording/stop
+app.post('/api/ai/rooms/:roomName/recording/stop', verifyToken, async (req, res) => {
+  try {
+    const { roomName } = req.params;
+    
+    log.info(`Authenticated request to stop recording for room ${roomName}`);
+    
+    const recordingPath = await stopAIMeetingRecording(roomName);
+    res.json({ 
+      success: true, 
+      message: recordingPath ? 'Recording stopped' : 'No recording was in progress',
+      path: recordingPath
+    });
+  } catch (error) {
+    log.error(`API error stopping recording: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add a test endpoint to verify authentication
+app.get('/api/test-auth', verifyToken, (req, res) => {
+  // If we get here, authentication was successful
+  res.json({ 
+    success: true, 
+    message: 'Authentication successful',
+    tokenProvided: 'Valid token',
+    expectedToken: process.env.AI_MODERATOR_TOKEN === 'your-secure-token-here' ? 
+      'Default token not changed in .env' : 
+      'Custom token configured'
+  });
+});
+
+// Debug endpoint to check environment variables
+app.get('/api/debug/env', (req, res) => {
+  res.json({
+    AI_MODERATOR_TOKEN_LENGTH: process.env.AI_MODERATOR_TOKEN ? process.env.AI_MODERATOR_TOKEN.length : 0,
+    AI_MODERATOR_TOKEN_FIRST_CHARS: process.env.AI_MODERATOR_TOKEN ? process.env.AI_MODERATOR_TOKEN.substring(0, 3) + '...' : 'not set',
+    ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS
+  });
+});
 
 // SSL cert for HTTPS access
 const options = {
@@ -429,19 +557,19 @@ let roomRecordings = {}; // { roomName: { ffmpeg, transport, consumer, path, mon
 import { mediaCodecs, workerSettings } from './mediaSoup/config.js';
 
 const createWorker = async () => {
-  worker = await mediasoup.createWorker(workerSettings);
-  console.log(`worker pid ${worker.pid}`);
+  const workerInstance = await mediasoup.createWorker(workerSettings);
+  console.log(`worker pid ${workerInstance.pid}`);
 
-  worker.on("died", (error) => {
+  workerInstance.on("died", (error) => {
     // This implies something serious happened, so kill the application
     console.error("mediasoup worker has died");
     setTimeout(() => process.exit(1), 2000); // exit in 2 seconds
   });
 
-  return worker;
+  return workerInstance;
 };
 
-// We create a Worker as soon as our application starts
+// Initialize worker
 worker = createWorker();
 
 // This is an Array of RtpCapabilities
@@ -469,7 +597,17 @@ connections.on("connection", async (socket) => {
     log.info(`Peer disconnected: ${socket.id}`);
     
     // Get room info before removing the peer
-    const { roomName } = peers[socket.id];
+    const { roomName } = peers[socket.id] || {};
+    
+    // If this peer doesn't exist or has no room, just clean up
+    if (!roomName) {
+      log.warn(`Peer ${socket.id} disconnected but had no associated room`);
+      delete peers[socket.id];
+      consumers = removeItems(consumers, socket.id, "consumer");
+      producers = removeItems(producers, socket.id, "producer");
+      transports = removeItems(transports, socket.id, "transport");
+      return;
+    }
     
     // Remove the peer and update room peers list
     delete peers[socket.id];
@@ -479,73 +617,13 @@ connections.on("connection", async (socket) => {
       // If this was the last peer, stop the room recording
       if (rooms[roomName].peers.length === 0 && roomRecordings[roomName]) {
         log.info(`Last participant left room ${roomName}, stopping recording`);
-        try {
-          // Clean up recording resources
-          clearInterval(roomRecordings[roomName].monitorInterval);
-          roomRecordings[roomName].ffmpeg.stdin.end();
-          roomRecordings[roomName].ffmpeg.kill("SIGTERM");
-          
-          // Make sure to close the transport and consumer
-          if (roomRecordings[roomName].transport) {
-            roomRecordings[roomName].transport.close();
-          }
-          if (roomRecordings[roomName].consumer) {
-            roomRecordings[roomName].consumer.close();
-          }
-          
-          log.info(`Recording stopped for room ${roomName}, file: ${roomRecordings[roomName].path}`);
-          delete roomRecordings[roomName];
-        } catch (error) {
-          log.error(`Error stopping room recording: ${error.message}`);
-        }
+        cleanupRecording(roomName);
       }
     }
     
-    // Stop any ongoing recordings
-    if (peers[socket.id]?.recording) {
-      log.info(`Stopping recording for peer ${socket.id}`);
-      try {
-        // Clear the monitoring interval
-        if (peers[socket.id].recording.monitorInterval) {
-          clearInterval(peers[socket.id].recording.monitorInterval);
-        }
-
-        // Gracefully close FFmpeg
-        if (peers[socket.id].recording.ffmpeg) {
-          peers[socket.id].recording.ffmpeg.stdin.end();
-          peers[socket.id].recording.ffmpeg.kill("SIGTERM");
-        }
-
-        // Close transport and consumer
-        if (peers[socket.id].recording.transport) {
-          peers[socket.id].recording.transport.close();
-        }
-        if (peers[socket.id].recording.consumer) {
-          peers[socket.id].recording.consumer.close();
-        }
-
-        log.info("Recording stopped successfully");
-
-        // Check final file size
-        const finalStats = fs.statSync(peers[socket.id].recording.path);
-        log.info(`Final recording file size: ${finalStats.size} bytes`);
-      } catch (error) {
-        log.error(`Error stopping recording: ${error.message}`);
-      }
-    }
-
     consumers = removeItems(consumers, socket.id, "consumer");
     producers = removeItems(producers, socket.id, "producer");
     transports = removeItems(transports, socket.id, "transport");
-
-    // const { roomName } = peers[socket.id];
-    delete peers[socket.id];
-
-    // remove socket from room
-    rooms[roomName] = {
-      router: rooms[roomName].router,
-      peers: rooms[roomName].peers.filter((socketId) => socketId !== socket.id),
-    };
   });
 
   socket.on("joinRoom", async ({ roomName }, callback) => {
@@ -586,7 +664,8 @@ connections.on("connection", async (socket) => {
       router1 = rooms[roomName].router;
       peers = rooms[roomName].peers || [];
     } else {
-      router1 = await worker.createRouter({ mediaCodecs });
+      const workerInstance = await worker;
+      router1 = await workerInstance.createRouter({ mediaCodecs });
     }
 
     console.log(`Router ID: ${router1.id}`, peers.length);
@@ -629,35 +708,46 @@ connections.on("connection", async (socket) => {
   });
 
   const addTransport = (transport, roomName, consumer) => {
-    transports = [
-      ...transports,
-      { socketId: socket.id, transport, roomName, consumer },
-    ];
+    // Push to the array instead of reassigning
+    transports.push({ 
+      socketId: socket.id, 
+      transport, 
+      roomName, 
+      consumer 
+    });
 
-    peers[socket.id] = {
-      ...peers[socket.id],
-      transports: [...peers[socket.id].transports, transport.id],
-    };
+    // Update the peer's transports array
+    if (!peers[socket.id]) {
+      peers[socket.id] = {
+        socket,
+        roomName,
+        transports: [],
+        producers: [],
+        consumers: [],
+        peerDetails: {
+          name: "",
+          isAdmin: false,
+        }
+      };
+    }
+    
+    peers[socket.id].transports.push(transport.id);
   };
 
   const addProducer = (producer, roomName) => {
-    producers = [...producers, { socketId: socket.id, producer, roomName }];
+    producers.push({ socketId: socket.id, producer, roomName });
 
-    peers[socket.id] = {
-      ...peers[socket.id],
-      producers: [...peers[socket.id].producers, producer.id],
-    };
+    if (peers[socket.id]) {
+      peers[socket.id].producers.push(producer.id);
+    }
   };
 
   const addConsumer = (consumer, roomName) => {
-    // add the consumer to the consumers list
-    consumers = [...consumers, { socketId: socket.id, consumer, roomName }];
+    consumers.push({ socketId: socket.id, consumer, roomName });
 
-    // add the consumer id to the peers list
-    peers[socket.id] = {
-      ...peers[socket.id],
-      consumers: [...peers[socket.id].consumers, consumer.id],
-    };
+    if (peers[socket.id]) {
+      peers[socket.id].consumers.push(consumer.id);
+    }
   };
 
   socket.on("getProducers", (callback) => {
@@ -776,6 +866,22 @@ connections.on("connection", async (socket) => {
             log.info(`Room recording started for ${roomName}`);
           } catch (error) {
             log.error(`Failed to start room recording: ${error.message}`);
+          }
+        }
+
+        // Add this block to check for pending AI recordings
+        if (kind === "video" && rooms[roomName] && rooms[roomName].pendingAIRecording) {
+          log.info(`Video producer created in room with pending AI recording: ${roomName}`);
+          try {
+            // Add a small delay to ensure producer is fully established
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            const recording = await startRecording(producer, roomName, "ai-moderator");
+            roomRecordings[roomName] = recording;
+            rooms[roomName].pendingAIRecording = false;
+            log.info(`Pending AI recording started for ${roomName}`);
+          } catch (error) {
+            log.error(`Failed to start pending AI recording: ${error.message}`);
           }
         }
 
@@ -918,18 +1024,40 @@ const isPortInUse = async (port) => {
   });
 };
 
-// Improve the findAvailablePort function to better handle port conflicts
-const findAvailablePort = async (startPort = 10000, endPort = 59999) => {
-  let port = startPort;
-  while (port <= endPort) {
-    const inUse = await isPortInUse(port);
-    if (!inUse) {
+// Improved findAvailablePort function with better error handling
+const findAvailablePort = async (start = 10000, end = 59999, maxRetries = 20) => {
+  let retries = 0;
+  let lastError = null;
+
+  while (retries < maxRetries) {
+    const port = Math.floor(Math.random() * (end - start + 1)) + start;
+    
+    try {
+      // Test if port is available by creating a temporary UDP socket
+      const testSocket = dgram.createSocket('udp4');
+      
+      await new Promise((resolve, reject) => {
+        testSocket.on('error', (err) => {
+          reject(err);
+        });
+        
+        testSocket.bind(port, '0.0.0.0', () => {
+          testSocket.close();
+          resolve();
+        });
+      });
+      
       log.debug(`Found available port: ${port}`);
       return port;
+    } catch (error) {
+      lastError = error;
+      log.debug(`Port ${port} is not available: ${error.message}`);
+      retries++;
     }
-    port++;
   }
-  throw new Error('No available ports found in range');
+  
+  log.error(`Failed to find available port after ${maxRetries} attempts. Last error: ${lastError?.message}`);
+  throw new Error(`Failed to find available port after ${maxRetries} attempts`);
 };
 
 // Call FFmpeg check on startup
@@ -948,6 +1076,10 @@ const cleanupRecording = async (roomName) => {
     // Clear monitoring interval
     if (roomRecordings[roomName].monitorInterval) {
       clearInterval(roomRecordings[roomName].monitorInterval);
+    }
+    
+    if (roomRecordings[roomName].packetMonitor) {
+      clearInterval(roomRecordings[roomName].packetMonitor);
     }
     
     // Kill FFmpeg process
@@ -980,5 +1112,118 @@ const cleanupRecording = async (roomName) => {
     log.info(`Recording cleanup completed for room ${roomName}`);
   } catch (error) {
     log.error(`Error during recording cleanup: ${error.message}`);
+  }
+};
+
+/**
+ * Starts a recording for an AI-moderated meeting
+ * @param {string} roomName - The room to record
+ * @returns {Promise<string|null>} - Path to the recording file or null if pending
+ */
+const startAIMeetingRecording = async (roomName) => {
+  try {
+    if (!rooms[roomName]) {
+      log.error(`Room ${roomName} not found for AI recording`);
+      return null;
+    }
+    
+    if (roomRecordings[roomName]) {
+      log.info(`Recording already in progress for room ${roomName}`);
+      return roomRecordings[roomName].path;
+    }
+    
+    log.info(`AI initiating recording for room ${roomName}`);
+    
+    // Find the first video producer in the room to record
+    let producerToRecord = null;
+    for (const producer of producers) {
+      if (producer.roomName === roomName && producer.producer.kind === 'video') {
+        producerToRecord = producer.producer;
+        break;
+      }
+    }
+    
+    if (!producerToRecord) {
+      log.warn(`No video producers found in room ${roomName}, waiting for one`);
+      rooms[roomName].pendingAIRecording = true;
+      return null;
+    }
+    
+    const recording = await startRecording(producerToRecord, roomName, "ai-moderator");
+    roomRecordings[roomName] = recording;
+    
+    log.info(`AI recording started for ${roomName}: ${recording.path}`);
+    return recording.path;
+  } catch (error) {
+    log.error(`Failed to start AI recording: ${error.message}`);
+    throw error;
+  }
+};
+
+/**
+ * Stops an AI-moderated meeting recording
+ * @param {string} roomName - The room to stop recording
+ * @returns {Promise<string|null>} - Path to the completed recording file
+ */
+const stopAIMeetingRecording = async (roomName) => {
+  try {
+    if (!roomRecordings[roomName]) {
+      log.warn(`No recording in progress for room ${roomName}`);
+      return null;
+    }
+    
+    log.info(`AI stopping recording for room ${roomName}`);
+    
+    // Store path before cleanup
+    const recordingPath = roomRecordings[roomName].path;
+    
+    // Clean up recording resources
+    clearInterval(roomRecordings[roomName].monitorInterval);
+    clearInterval(roomRecordings[roomName].packetMonitor);
+    roomRecordings[roomName].ffmpeg.kill("SIGTERM");
+    roomRecordings[roomName].transport.close();
+    roomRecordings[roomName].consumer.close();
+    delete roomRecordings[roomName];
+    
+    log.info(`AI recording stopped for ${roomName}`);
+    return recordingPath;
+  } catch (error) {
+    log.error(`Failed to stop AI recording: ${error.message}`);
+    throw error;
+  }
+};
+
+// First, let's add a function to verify SDP file creation with better error handling
+const createSdpFile = (sdpPath, sdpContent) => {
+  try {
+    // Make sure the directory exists
+    const sdpDir = path.dirname(sdpPath);
+    if (!fs.existsSync(sdpDir)) {
+      fs.mkdirSync(sdpDir, { recursive: true });
+      log.info(`Created directory for SDP file: ${sdpDir}`);
+    }
+    
+    // Write the SDP file with explicit encoding
+    fs.writeFileSync(sdpPath, sdpContent, { encoding: 'utf8' });
+    
+    // Verify the file was created
+    if (fs.existsSync(sdpPath)) {
+      const stats = fs.statSync(sdpPath);
+      log.info(`✅ SDP file created successfully: ${sdpPath} (${stats.size} bytes)`);
+      
+      // Read back the content to verify
+      const readContent = fs.readFileSync(sdpPath, 'utf8');
+      log.debug(`SDP content verification: ${readContent.length} bytes read`);
+      
+      return true;
+    } else {
+      log.error(`❌ SDP file not found after writing: ${sdpPath}`);
+      return false;
+    }
+  } catch (error) {
+    log.error(`❌ Error creating SDP file: ${error.message}`);
+    log.error(`Path: ${sdpPath}`);
+    log.error(`Current working directory: ${process.cwd()}`);
+    return false;
   }
 };

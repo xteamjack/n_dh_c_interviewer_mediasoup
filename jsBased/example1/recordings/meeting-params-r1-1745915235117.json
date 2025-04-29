@@ -1,0 +1,400 @@
+{
+  "timestamp": "2025-04-29T08:27:15.117Z",
+  "roomName": "r1",
+  "socketId": "GtptR--dmujuWz9WAAAB",
+  "producerId": "1a8544a8-b9eb-498a-b0d3-91d35920ff5f",
+  "rtpParameters": {
+    "codecs": [
+      {
+        "mimeType": "video/VP8",
+        "payloadType": 96,
+        "clockRate": 90000,
+        "parameters": {},
+        "rtcpFeedback": [
+          {
+            "type": "goog-remb",
+            "parameter": ""
+          },
+          {
+            "type": "transport-cc",
+            "parameter": ""
+          },
+          {
+            "type": "ccm",
+            "parameter": "fir"
+          },
+          {
+            "type": "nack",
+            "parameter": ""
+          },
+          {
+            "type": "nack",
+            "parameter": "pli"
+          }
+        ]
+      },
+      {
+        "mimeType": "video/rtx",
+        "payloadType": 97,
+        "clockRate": 90000,
+        "parameters": {
+          "apt": 96
+        },
+        "rtcpFeedback": []
+      }
+    ],
+    "headerExtensions": [
+      {
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:mid",
+        "id": 4,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+        "id": 10,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+        "id": 11,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
+        "id": 2,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+        "id": 3,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "urn:3gpp:video-orientation",
+        "id": 13,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "urn:ietf:params:rtp-hdrext:toffset",
+        "id": 14,
+        "encrypt": false,
+        "parameters": {}
+      },
+      {
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay",
+        "id": 5,
+        "encrypt": false,
+        "parameters": {}
+      }
+    ],
+    "encodings": [
+      {
+        "ssrc": 3669965472,
+        "rtx": {
+          "ssrc": 105073131
+        },
+        "dtx": false
+      }
+    ],
+    "rtcp": {
+      "cname": "Gd+CVZaUxt3KOZ0e",
+      "reducedSize": true
+    },
+    "mid": "1"
+  },
+  "routerRtpCapabilities": {
+    "codecs": [
+      {
+        "kind": "audio",
+        "mimeType": "audio/opus",
+        "clockRate": 48000,
+        "channels": 2,
+        "rtcpFeedback": [
+          {
+            "type": "nack",
+            "parameter": ""
+          },
+          {
+            "type": "transport-cc",
+            "parameter": ""
+          }
+        ],
+        "parameters": {
+          "minptime": 10,
+          "useinbandfec": 1
+        },
+        "preferredPayloadType": 111
+      },
+      {
+        "kind": "video",
+        "mimeType": "video/VP8",
+        "clockRate": 90000,
+        "rtcpFeedback": [
+          {
+            "type": "nack",
+            "parameter": ""
+          },
+          {
+            "type": "nack",
+            "parameter": "pli"
+          },
+          {
+            "type": "ccm",
+            "parameter": "fir"
+          },
+          {
+            "type": "goog-remb",
+            "parameter": ""
+          },
+          {
+            "type": "transport-cc",
+            "parameter": ""
+          }
+        ],
+        "parameters": {
+          "x-google-start-bitrate": 1000
+        },
+        "preferredPayloadType": 100
+      },
+      {
+        "kind": "video",
+        "mimeType": "video/rtx",
+        "preferredPayloadType": 101,
+        "clockRate": 90000,
+        "parameters": {
+          "apt": 100
+        },
+        "rtcpFeedback": []
+      }
+    ],
+    "headerExtensions": [
+      {
+        "kind": "audio",
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:mid",
+        "preferredId": 1,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:mid",
+        "preferredId": 1,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+        "preferredId": 2,
+        "preferredEncrypt": false,
+        "direction": "recvonly"
+      },
+      {
+        "kind": "video",
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+        "preferredId": 3,
+        "preferredEncrypt": false,
+        "direction": "recvonly"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
+        "preferredId": 4,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
+        "preferredId": 4,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+        "preferredId": 5,
+        "preferredEncrypt": false,
+        "direction": "recvonly"
+      },
+      {
+        "kind": "video",
+        "uri": "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+        "preferredId": 5,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07",
+        "preferredId": 6,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "urn:ietf:params:rtp-hdrext:framemarking",
+        "preferredId": 7,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+        "preferredId": 10,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "urn:3gpp:video-orientation",
+        "preferredId": 11,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "urn:ietf:params:rtp-hdrext:toffset",
+        "preferredId": 12,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time",
+        "preferredId": 13,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time",
+        "preferredId": 13,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay",
+        "preferredId": 14,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "video",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay",
+        "preferredId": 14,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      }
+    ]
+  },
+  "systemInfo": {
+    "platform": "win32",
+    "nodeVersion": "v22.13.1",
+    "mediasoupVersion": "3.15.7",
+    "hostname": "omen01",
+    "networkInterfaces": {
+      "Ethernet 7": [
+        {
+          "address": "fe80::9eea:f6a2:89af:cc7d",
+          "netmask": "ffff:ffff:ffff:ffff::",
+          "family": "IPv6",
+          "mac": "0a:00:27:00:00:15",
+          "internal": false,
+          "cidr": "fe80::9eea:f6a2:89af:cc7d/64",
+          "scopeid": 21
+        },
+        {
+          "address": "192.168.56.1",
+          "netmask": "255.255.255.0",
+          "family": "IPv4",
+          "mac": "0a:00:27:00:00:15",
+          "internal": false,
+          "cidr": "192.168.56.1/24"
+        }
+      ],
+      "Ethernet 8": [
+        {
+          "address": "fe80::a01a:12b0:8d48:b8ad",
+          "netmask": "ffff:ffff:ffff:ffff::",
+          "family": "IPv6",
+          "mac": "0a:00:27:00:00:1c",
+          "internal": false,
+          "cidr": "fe80::a01a:12b0:8d48:b8ad/64",
+          "scopeid": 28
+        },
+        {
+          "address": "192.168.59.1",
+          "netmask": "255.255.255.0",
+          "family": "IPv4",
+          "mac": "0a:00:27:00:00:1c",
+          "internal": false,
+          "cidr": "192.168.59.1/24"
+        }
+      ],
+      "Wi-Fi": [
+        {
+          "address": "2406:b400:d5:9c51:cfeb:a0f5:8860:55d2",
+          "netmask": "ffff:ffff:ffff:ffff::",
+          "family": "IPv6",
+          "mac": "d4:d2:52:a8:d2:84",
+          "internal": false,
+          "cidr": "2406:b400:d5:9c51:cfeb:a0f5:8860:55d2/64",
+          "scopeid": 0
+        },
+        {
+          "address": "2406:b400:d5:9c51:bde8:3e59:91d4:82bf",
+          "netmask": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+          "family": "IPv6",
+          "mac": "d4:d2:52:a8:d2:84",
+          "internal": false,
+          "cidr": "2406:b400:d5:9c51:bde8:3e59:91d4:82bf/128",
+          "scopeid": 0
+        },
+        {
+          "address": "fe80::26b0:4767:9431:bad5",
+          "netmask": "ffff:ffff:ffff:ffff::",
+          "family": "IPv6",
+          "mac": "d4:d2:52:a8:d2:84",
+          "internal": false,
+          "cidr": "fe80::26b0:4767:9431:bad5/64",
+          "scopeid": 19
+        },
+        {
+          "address": "192.168.0.51",
+          "netmask": "255.255.255.0",
+          "family": "IPv4",
+          "mac": "d4:d2:52:a8:d2:84",
+          "internal": false,
+          "cidr": "192.168.0.51/24"
+        }
+      ],
+      "Loopback Pseudo-Interface 1": [
+        {
+          "address": "::1",
+          "netmask": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+          "family": "IPv6",
+          "mac": "00:00:00:00:00:00",
+          "internal": true,
+          "cidr": "::1/128",
+          "scopeid": 0
+        },
+        {
+          "address": "127.0.0.1",
+          "netmask": "255.0.0.0",
+          "family": "IPv4",
+          "mac": "00:00:00:00:00:00",
+          "internal": true,
+          "cidr": "127.0.0.1/8"
+        }
+      ]
+    }
+  }
+}

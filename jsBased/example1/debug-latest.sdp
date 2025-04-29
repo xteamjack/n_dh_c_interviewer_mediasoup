@@ -1,0 +1,11 @@
+v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=FFmpeg
+c=IN IP4 127.0.0.1
+t=0 0
+m=video 64803 RTP/AVP 100
+a=rtpmap:100 VP8/90000
+a=fmtp:100 max-fr=30;max-recv-width=640;max-recv-height=480
+a=recvonly
+a=rtcp-mux
+a=ssrc:580731536 cname:ffmpeg
